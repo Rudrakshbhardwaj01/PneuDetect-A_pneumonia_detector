@@ -4,95 +4,131 @@ import tensorflow as tf
 from pathlib import Path
 from keras.models import load_model
 from keras.applications.densenet import preprocess_input
+from PIL import Image
 
 
-# ---------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------
+# =========================================================
+# Page config
+# =========================================================
 st.set_page_config(
-    page_title="Pneumonia Detection",
+    page_title="PneuDetect – Chest X-ray Classifier",
     layout="centered"
 )
 
+st.title("🩺 PneuDetect – Chest X-ray Analysis")
+st.caption(
+    "Educational ML project. NOT a medical diagnostic tool."
+)
+
+st.info(
+    "ℹ️ This model was trained ONLY on chest X-ray images. "
+    "Uploading non–X-ray images may lead to meaningless predictions."
+)
+
+
+# =========================================================
+# Paths & constants
+# =========================================================
 PROJECT_ROOT = Path(__file__).resolve().parent
 MODEL_PATH = PROJECT_ROOT / "model" / "best_model.keras"
 IMG_SIZE = 224
 
 
-# ---------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------
+# =========================================================
+# Model loading (cached)
+# =========================================================
 @st.cache_resource
 def load_trained_model():
     if not MODEL_PATH.exists():
-        st.error("Trained model not found. Please train the model first.")
+        st.error("Model file not found. Ensure best_model.keras is present.")
         st.stop()
     return load_model(MODEL_PATH)
 
 
-def preprocess_image(uploaded_file):
-    image = tf.keras.utils.load_img(
-        uploaded_file,
-        target_size=(IMG_SIZE, IMG_SIZE)
-    )
-    image = tf.keras.utils.img_to_array(image)
+# =========================================================
+# Image utilities
+# =========================================================
+def is_probably_xray(pil_image: Image.Image) -> bool:
+    """
+    Very lightweight heuristic:
+    - X-rays are mostly grayscale
+    - Low color variance
+    This is NOT perfect, but prevents obvious nonsense inputs.
+    """
+    img = np.array(pil_image.convert("RGB"))
+    r, g, b = img[..., 0], img[..., 1], img[..., 2]
+    color_variance = np.mean(np.abs(r - g) + np.abs(r - b) + np.abs(g - b))
+    return color_variance < 15  # heuristic threshold
+
+
+def preprocess_image(pil_image: Image.Image):
+    image = pil_image.convert("RGB")
+    image = image.resize((IMG_SIZE, IMG_SIZE))
+    image = np.array(image)
     image = np.expand_dims(image, axis=0)
     image = preprocess_input(image)
     return image
 
 
 def predict(model, image):
+    """
+    Calibrated prediction logic with uncertainty handling.
+    """
     prob = float(model.predict(image)[0][0])
-    label = "PNEUMONIA" if prob >= 0.5 else "NORMAL"
-    confidence = prob if label == "PNEUMONIA" else 1 - prob
-    return label, confidence
+
+    if prob >= 0.7:
+        return "PNEUMONIA", prob
+    elif prob <= 0.3:
+        return "NORMAL", 1 - prob
+    else:
+        return "UNCERTAIN", prob
 
 
-# ---------------------------------------------------------
-# App UI
-# ---------------------------------------------------------
-st.title("🩺 Pneumonia Detection from Chest X-ray")
-st.write(
-    "Upload a chest X-ray image to get a model prediction. "
-    "**This tool is for educational purposes only and is not a medical diagnosis.**"
-)
-
+# =========================================================
+# App logic
+# =========================================================
 uploaded_file = st.file_uploader(
     "Upload a chest X-ray image (JPG / PNG)",
     type=["jpg", "jpeg", "png"]
 )
 
 if uploaded_file is not None:
-    st.image(uploaded_file, caption="Uploaded X-ray", use_column_width=True)
+    pil_image = Image.open(uploaded_file)
+    st.image(pil_image, caption="Uploaded image", use_column_width=True)
+
+    if not is_probably_xray(pil_image):
+        st.error(
+            " This image does NOT appear to be a chest X-ray.\n\n"
+            "Prediction aborted to avoid misleading results."
+        )
+        st.stop()
 
     model = load_trained_model()
-    image = preprocess_image(uploaded_file)
+    input_tensor = preprocess_image(pil_image)
 
-    with st.spinner("Running inference..."):
-        label, confidence = predict(model, image)
+    with st.spinner("Running model inference..."):
+        label, confidence = predict(model, input_tensor)
 
-    st.subheader("Prediction Result")
+    st.subheader("Result")
 
-    if 0.4 <= confidence <= 0.6:
+    if label == "UNCERTAIN":
         st.warning(
-            f"⚠️ **Inconclusive result**\n\n"
-            f"The model is uncertain.\n\n"
-            f"Predicted: **{label}**  \n"
+            f"**Inconclusive**\n\n"
+            f"Model confidence is low ({confidence * 100:.2f}%).\n"
+            "This image may be ambiguous or out-of-distribution."
+        )
+    elif label == "PNEUMONIA":
+        st.error(
+            f"**PNEUMONIA detected**\n\n"
             f"Confidence: **{confidence * 100:.2f}%**"
         )
     else:
-        if label == "PNEUMONIA":
-            st.error(
-                f"🟥 **PNEUMONIA detected**\n\n"
-                f"Confidence: **{confidence * 100:.2f}%**"
-            )
-        else:
-            st.success(
-                f"🟩 **NORMAL**\n\n"
-                f"Confidence: **{confidence * 100:.2f}%**"
-            )
+        st.success(
+            f" **NORMAL**\n\n"
+            f"Confidence: **{confidence * 100:.2f}%**"
+        )
 
     st.caption(
-        "⚠️ Disclaimer: This is a machine learning model trained on a limited dataset. "
-        "It should NOT be used for clinical diagnosis."
+        "This output is generated by a neural network trained on a limited dataset. "
+        "It must NOT be used for clinical decisions."
     )
