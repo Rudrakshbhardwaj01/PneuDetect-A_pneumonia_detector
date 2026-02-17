@@ -1,0 +1,28 @@
+# ============================================================
+# DATA
+# ============================================================
+data:
+  train_dir: "D:/Downloads/archive/chest_xray/chest_xray/train"
+  val_dir: "D:/Downloads/archive/chest_xray/chest_xray/val"
+  test_dir: "D:/Downloads/archive/chest_xray/chest_xray/test"
+
+  img_height: 224
+  img_width: 224
+  batch_size: 32
+
+
+# ============================================================
+# MODEL
+# ============================================================
+model:
+  backbone: densenet121      # or densenet169
+  freeze_backbone: true
+  learning_rate: 0.0001
+
+
+# ============================================================
+# TRAINING
+# ============================================================
+training:
+  epochs: 10
+  patience: 3
